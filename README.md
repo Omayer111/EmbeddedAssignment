@@ -1,350 +1,435 @@
-# YOLOv5 Object Detection - Simple & IPC Implementations
+# Object Detection with Shared Memory IPC
 
 ## Overview
 
-This project provides **two approaches** for object detection using YOLOv5:
+This project demonstrates **Inter-Process Communication (IPC)** using shared memory for object detection:
 
-1. **Simple Detection** (`detect.py`) - All-in-one, perfect for Windows
-2. **IPC Detection** - Multi-process with shared memory (C + Python, for embedded systems)
+- **C Program** (`objectDetection.c`) - Runs YOLOv4-tiny detection and writes results to shared memory
+- **Python Program** (`objectReaderSHM.py`) - Reads detection results from shared memory and renders bounding boxes
 
-## Quick Start (Windows Users) ⚡
+## How It Works
 
-**Install dependencies:**
-```bash
-pip install ultralytics opencv-python numpy
+
+```
+┌─────────────────────────────────────────────┐
+│  PROCESS 1: C DETECTOR                      │
+│  (objectDetection.c)                        │
+│                                             │
+│  1. Load sample.png                         │
+│  2. Run YOLOv4-tiny detection               │
+│  3. Extract bounding boxes                  │
+│  4. WRITE to shared memory                  │
+│     /dev/shm/ipc_yolov4_shm                 │
+└─────────────────────────────────────────────┘
+                    ↓
+        ┌───────────────────────┐
+        │  Shared Memory Buffer │
+        │  (264 bytes)          │
+        │                       │
+        │  count: 3             │
+        │  det[0]: {x,y,w,h...} │
+        │  det[1]: {x,y,w,h...} │
+        │  det[2]: {x,y,w,h...} │
+        └───────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────┐
+│  PROCESS 2: PYTHON READER                   │
+│  (objectReaderSHM.py)                       │
+│                                             │
+│  1. READ from shared memory                 │
+│     /dev/shm/ipc_yolov4_shm                 │
+│  2. Load sample.png                         │
+│  3. Draw green bounding boxes               │
+│  4. Save sample_detected.png                │
+└─────────────────────────────────────────────┘
 ```
 
-**Run detection:**
-```bash
-python detect.py your_image.jpg
-```
+## Key Concept
 
-**Output:**
-- Console: Detection results with confidence scores
-- File: `your_image_detected.jpg` with annotated bounding boxes
+**Shared Memory** is a POSIX IPC mechanism that allows two independent processes to:
+- Share data without file I/O
+- Communicate at memory speed (<1ms)
+- Run in different languages (C ↔ Python)
 
-**Done!** Your annotated image is ready.
+Both processes access **the same memory location** (`/dev/shm/ipc_yolov4_shm`) using identical data structures.
 
 ---
 
-## Files Overview
+## Files
 
-| File | Type | Purpose | Use Case |
-|------|------|---------|----------|
-| `detect.py` | Python | Simple all-in-one detector | **Recommended for Windows/Testing** |
-| `ipc_yolov4.c` | C | IPC detector (Darknet) | Embedded systems with Darknet |
-| `ipc_yolov4_replica.py` | Python | IPC detector (YOLOv5) | Testing IPC without C compilation |
-| `ipc_reader.py` | Python | IPC reader & renderer | Reads detections from shared memory |
-
----
-
-## Approach 1: Simple Detection (Recommended)
-
-### What It Does
-`detect.py` performs complete object detection in a single script:
-1. Loads your image
-2. Runs YOLOv5s detection
-3. Draws bounding boxes with labels
-4. Saves annotated output
-
-### Usage
-```bash
-# Basic usage
-python detect.py image.jpg
-
-# Custom confidence threshold (default: 0.5)
-python detect.py image.jpg 0.7
-
-# Custom confidence and NMS threshold
-python detect.py image.jpg 0.6 0.4
-```
-
-### Example Output
-```
-Image: dog.jpeg (640x480)
-Loading YOLOv5s model...
-Running detection (conf=0.5, iou=0.45)...
-
-Detected 3 object(s):
-  [0] dog: conf=0.941 box=(125,180,320,280)
-  [1] person: conf=0.876 box=(400,50,180,420)
-  [2] car: conf=0.732 box=(10,300,250,150)
-
-✓ Saved annotated image to: dog_detected.jpeg
-```
+| File | Language | Role | Function |
+|------|----------|------|----------|
+| `objectDetection.c` | C | **Writer** | Detects objects, writes to shared memory |
+| `objectReaderSHM.py` | Python | **Reader** | Reads from shared memory, renders output |
+| `sample.png` | - | Test image | Input for detection |
 
 ---
 
-## Approach 2: IPC Detection (Advanced)
+## Shared Memory Data Structure
 
-### Architecture
-```
-┌──────────────────────────────────────┐
-│ DETECTOR PROCESS                     │
-│ (ipc_yolov4_replica.py or .c)        │
-│                                      │
-│ 1. Load image                        │
-│ 2. Run YOLOv5/YOLOv4 detection      │
-│ 3. Write results to shared memory    │
-└──────────────────────────────────────┘
-                ↓
-    /dev/shm/ipc_yolov4_shm
-    (Shared Memory: 264 bytes)
-                ↓
-┌──────────────────────────────────────┐
-│ READER PROCESS                       │
-│ (ipc_reader.py)                      │
-│                                      │
-│ 1. Read detections from memory       │
-│ 2. Draw bounding boxes on image      │
-│ 3. Save annotated output             │
-└──────────────────────────────────────┘
-```
+Both C and Python use **identical structures** to ensure compatibility:
 
-### How It Works Together
-
-**Step 1: Detector runs and populates shared memory**
-```python
-# ipc_yolov4_replica.py does:
-1. Detects objects using YOLOv5
-2. Creates shared memory buffer (/dev/shm/ipc_yolov4_shm)
-3. Writes detection results:
-   - count: number of objects found
-   - detections[]: array of {class_id, confidence, x, y, w, h}
-```
-
-**Step 2: Reader accesses shared memory**
-```python
-# ipc_reader.py does:
-1. Opens shared memory buffer (same name)
-2. Reads detection count and bounding boxes
-3. Loads original image
-4. Draws boxes and labels
-5. Saves as <image>_detected.<ext>
-```
-
-### Shared Memory Data Structure
-
+### C Structure (objectDetection.c)
 ```c
-// Maximum 10 detections per image
+#define SHM_NAME "/ipc_yolov4_shm"
 #define MAX_BOXES 10
 
 typedef struct {
-    int class_id;      // Object class (0=person, 2=car, etc.)
+    int class_id;      // Object class (0-79 COCO)
     float confidence;  // Detection confidence (0.0-1.0)
-    int x, y;         // Top-left corner of bounding box
-    int w, h;         // Width and height of box
+    int x, y;         // Top-left corner
+    int w, h;         // Width and height
 } Detection;
 
 typedef struct {
-    int count;              // How many objects detected
-    Detection det[10];      // Array of detections
-} SharedData;              // Total: ~264 bytes
+    int count;              // Number of detections
+    Detection det[MAX_BOXES]; // Array of detections
+} SharedData;              // Total: 4 + (6*4)*10 = 244 bytes
 ```
 
-### Usage (Linux/WSL)
+### Python Structure (objectReaderSHM.py)
+```python
+SHM_NAME = "/ipc_yolov4_shm"
+MAX_BOXES = 10
 
-**Option A: Python Replica (No C compilation)**
-```bash
-# Terminal 1: Run detector
-python ipc_yolov4_replica.py sample.png
+class Detection(Structure):
+    _fields_ = [
+        ("class_id", c_int),
+        ("confidence", c_float),
+        ("x", c_int),
+        ("y", c_int),
+        ("w", c_int),
+        ("h", c_int),
+    ]
 
-# Terminal 2: Read and render
-python ipc_reader.py sample.png
+class SharedData(Structure):
+    _fields_ = [
+        ("count", c_int),
+        ("det", Detection * MAX_BOXES),
+    ]
 ```
 
-**Option B: C Program (Requires Darknet)**
-```bash
-# Compile C program
-gcc -o ipc_yolov4 ipc_yolov4.c -ldarknet -lm
-
-# Terminal 1: Run C detector
-./ipc_yolov4 sample.jpg
-
-# Terminal 2: Read and render
-python ipc_reader.py sample.jpg
-```
-
-### Why Use IPC Approach?
-
-**Benefits:**
-- **Modularity**: Detector and renderer run as separate processes
-- **Language Flexibility**: C detector + Python renderer (best of both worlds)
-- **Real-time**: Continuous detection stream possible
-- **Lightweight**: Only detection data shared, not full images
-- **Production-ready**: Mirrors embedded system architecture
-
-**When to Use:**
-- Embedded systems with C/C++ detection engine
-- Multi-process architecture requirements
-- Learning IPC concepts for systems programming
-- Production deployment on Linux/Unix systems
+**Both structures are byte-for-byte identical** - this is critical for IPC to work.
 
 ---
 
-## Comparison: Simple vs IPC
+## Usage (Linux/WSL Only)
 
-| Feature | Simple (`detect.py`) | IPC (replica + reader) |
-|---------|---------------------|------------------------|
-| **Ease of Use** | ⭐⭐⭐⭐⭐ One command | ⭐⭐⭐ Two processes |
-| **Windows Support** | ✅ Native | ⚠️ WSL/Linux only |
-| **Setup** | Just run it | Shared memory required |
-| **Speed** | Fast (direct) | Fast (IPC overhead minimal) |
-| **Use Case** | Testing, development | Production, embedded |
-| **Processes** | Single | Multiple (detector + reader) |
-| **Best For** | Quick results | System architecture |
+### Prerequisites
+
+**For C Program:**
+```bash
+# Install Darknet library
+git clone https://github.com/AlexeyAB/darknet
+cd darknet
+make
+
+# Download YOLOv4-tiny weights
+wget https://github.com/AlexeyAB/darknet/releases/download/yolov4/yolov4-tiny.weights
+wget https://raw.githubusercontent.com/AlexeyAB/darknet/master/cfg/yolov4-tiny.cfg
+```
+
+**For Python Program:**
+```bash
+pip install opencv-python numpy
+```
+
+### Step 1: Compile C Program
+```bash
+gcc -o objectDetection objectDetection.c -ldarknet -lm
+```
+
+### Step 2: Run C Detector (Writes to Shared Memory)
+```bash
+./objectDetection sample.png
+```
+
+**Output:**
+```
+Detections written to shared memory. Count = 3
+```
+
+### Step 3: Run Python Reader (Reads from Shared Memory)
+```bash
+python objectReaderSHM.py sample.png
+```
+
+**Output:**
+```
+Read 3 detection(s) from shared memory:
+  [0] class_id=0 conf=0.89 box=(150,200,80,120)
+  [1] class_id=2 conf=0.76 box=(400,150,200,150)
+  [2] class_id=1 conf=0.65 box=(50,300,100,80)
+Rendering 3 detection(s)...
+Saved to sample_detected.png
+```
+
+### Step 4: View Output
+```bash
+# View the annotated image
+xdg-open sample_detected.png  # Linux
+open sample_detected.png      # macOS
+```
+
+---
+
+## How Data Flows Through Shared Memory
+
+### Write Process (C Program)
+
+1. **Create shared memory segment**
+   ```c
+   int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+   ftruncate(shm_fd, sizeof(SharedData));
+   ```
+
+2. **Map to process memory**
+   ```c
+   SharedData *shared = mmap(NULL, sizeof(SharedData), 
+                             PROT_READ | PROT_WRITE, 
+                             MAP_SHARED, shm_fd, 0);
+   ```
+
+3. **Run detection and populate structure**
+   ```c
+   shared->count = 3;
+   shared->det[0].x = 150;
+   shared->det[0].y = 200;
+   // ... etc
+   ```
+
+4. **Memory is persisted** at `/dev/shm/ipc_yolov4_shm`
+
+### Read Process (Python Program)
+
+1. **Open existing shared memory**
+   ```python
+   shm_path = "/dev/shm" + SHM_NAME
+   fd = os.open(shm_path, os.O_RDONLY)
+   ```
+
+2. **Memory map**
+   ```python
+   shm = mmap.mmap(fd, ctypes.sizeof(SharedData), 
+                   mmap.MAP_SHARED, mmap.PROT_READ)
+   ```
+
+3. **Read structure**
+   ```python
+   shared = SharedData.from_buffer_copy(shm[:])
+   count = shared.count  # 3
+   x = shared.det[0].x   # 150
+   ```
+
+4. **Draw boxes and save image**
+
+---
+
+## Process Communication Timeline
+
+```
+Time  │ C Process (Writer)          │ Python Process (Reader)
+──────┼─────────────────────────────┼──────────────────────────
+T0    │ Start                       │ (not started)
+T1    │ Load YOLOv4 model           │
+T2    │ Run detection on sample.png │
+T3    │ Write to shared memory      │
+      │ - count = 3                 │
+      │ - det[0] = {x,y,w,h...}     │
+      │ - det[1] = {x,y,w,h...}     │
+      │ - det[2] = {x,y,w,h...}     │
+T4    │ Exit (memory persists!)     │
+      │                             │
+T5    │                             │ Start
+T6    │                             │ Open /dev/shm/ipc_yolov4_shm
+T7    │                             │ Read SharedData structure
+T8    │                             │ Load sample.png
+T9    │                             │ Draw 3 bounding boxes
+T10   │                             │ Save sample_detected.png
+T11   │                             │ Exit
+```
+
+**Key Point**: C process can exit before Python reads - shared memory persists!
 
 ---
 
 ## Detection Parameters
 
-Both approaches support:
 - **Confidence Threshold**: 0.5 (50% minimum confidence)
 - **NMS Threshold**: 0.45 (Non-Maximum Suppression for overlapping boxes)
-- **Max Detections**: 10 objects per image (IPC limit, unlimited for simple)
-- **Model**: YOLOv5s (7MB, 80 object classes from COCO dataset)
+- **Max Detections**: 10 objects per image (MAX_BOXES limit)
+- **Model**: YOLOv4-tiny (lightweight, fast for embedded systems)
 
-### COCO Classes Detected
-Common objects include: person, car, dog, cat, bicycle, motorcycle, bus, truck, bird, boat, and 70 more.
-
----
-
-## Performance
-
-| Metric | Time | Notes |
-|--------|------|-------|
-| Model Download | ~10s | First run only, cached afterward |
-| Model Load | ~1-2s | Each run |
-| Detection (YOLOv5s) | ~0.1-0.5s | Depends on image size |
-| Rendering | ~0.05s | Drawing boxes |
-| Shared Memory I/O | <1ms | IPC approach only |
-
-**Total**: ~2-3 seconds per image (first run), ~0.5-1s subsequent runs
-
----
-
-## Dependencies
-
-### Simple Approach (`detect.py`)
-```bash
-pip install ultralytics opencv-python numpy
+### C Program Configuration
+```c
+float thresh = 0.5;  // Line 75: Confidence threshold
+// Line 83-87: NMS with threshold 0.45
+do_nms_sort(dets, nboxes, net->layers[net->n - 1].classes, 0.45);
 ```
-- **ultralytics**: YOLOv5 model and inference
-- **opencv-python**: Image I/O and rendering
-- **numpy**: Array operations
 
-### IPC Approach (Python Replica)
-Same as simple approach (works on Linux/WSL)
+---
 
-### IPC Approach (C Program)
-- **Darknet**: Full YOLOv4 framework
-- **GCC/Clang**: C compiler
-- **POSIX OS**: Linux, macOS, or WSL2
+## Why Shared Memory for IPC?
+
+### Advantages Over Other IPC Methods
+
+| Method | Speed | Size Limit | Complexity | Cross-Language |
+|--------|-------|------------|------------|----------------|
+| **Shared Memory** | ⚡ Fastest | Large | Medium | ✅ Yes |
+| Pipes | Medium | 64KB typical | Low | ✅ Yes |
+| Sockets | Slow | Unlimited | High | ✅ Yes |
+| Files | Slowest | Unlimited | Low | ✅ Yes |
+| Message Queues | Medium | Limited | Medium | ⚠️ Limited |
+
+### Real-World Use Cases
+
+1. **Embedded Systems**: C handles real-time detection, Python for visualization
+2. **Multi-Process Architecture**: Separate concerns (detection vs rendering)
+3. **Performance**: Only 244 bytes transferred, not full image data
+4. **Language Integration**: Best of both worlds (C speed + Python flexibility)
+
+---
+
+## Memory Layout Explained
+
+### Shared Memory Structure in Memory
+```
+Offset   │ Field          │ Type   │ Size   │ Value
+─────────┼────────────────┼────────┼────────┼──────────
+0x0000   │ count          │ int    │ 4      │ 3
+─────────┼────────────────┼────────┼────────┼──────────
+0x0004   │ det[0].class_id│ int    │ 4      │ 0
+0x0008   │ det[0].conf    │ float  │ 4      │ 0.89
+0x000C   │ det[0].x       │ int    │ 4      │ 150
+0x0010   │ det[0].y       │ int    │ 4      │ 200
+0x0014   │ det[0].w       │ int    │ 4      │ 80
+0x0018   │ det[0].h       │ int    │ 4      │ 120
+─────────┼────────────────┼────────┼────────┼──────────
+0x001C   │ det[1].class_id│ int    │ 4      │ 2
+0x0020   │ det[1].conf    │ float  │ 4      │ 0.76
+0x0024   │ det[1].x       │ int    │ 4      │ 400
+...      │ ...            │ ...    │ ...    │ ...
+─────────┼────────────────┼────────┼────────┼──────────
+Total: 4 + (24 × 10) = 244 bytes
+```
+
+---
+
+## Performance Metrics
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| **C: Load YOLOv4-tiny** | ~1-2s | First run only |
+| **C: Detection** | ~0.2-0.5s | Per image |
+| **C: Write to SHM** | <1ms | Memory operation |
+| **Python: Read from SHM** | <1ms | Memory operation |
+| **Python: Draw boxes** | ~0.05s | OpenCV rendering |
+| **Python: Save image** | ~0.1s | File I/O |
+| **Total IPC overhead** | <2ms | Nearly zero |
+
+**Key Insight**: Shared memory adds virtually no overhead compared to monolithic approach.
 
 ---
 
 ## Troubleshooting
 
-### "Image not found"
-- Check file path and extension
-- Use absolute path or ensure file is in current directory
+### "Shared memory not found"
+```bash
+# Check if shared memory exists
+ls -lh /dev/shm/ipc_yolov4_shm
 
-### "Shared memory not available" (IPC)
-- **Windows**: Use WSL2 or Docker for Linux environment
-- **Alternative**: Use simple `detect.py` instead
-
-### "Model download fails"
-- Check internet connection
-- Models download from GitHub (requires access)
-- Default cache: `~/.cache/ultralytics/`
-
-### "No objects detected"
-- Lower confidence threshold: `python detect.py image.jpg 0.3`
-- Check image quality and object visibility
-- Try different image with clear objects
-
-### Low detection accuracy
-- Objects too small or unclear
-- Try YOLOv5m for better accuracy: Edit code to use `'yolov5m.pt'`
-- Increase image resolution
-
----
-
-## Advanced Usage
-
-### Process Flow Diagram (IPC)
-
-```
-Time →
-
-T0: Detector starts
-    ├─ Load YOLOv5 model (1s)
-    └─ Load image
-
-T1: Detection runs (0.5s)
-    └─ Inference on image
-
-T2: Write to shared memory (<1ms)
-    ├─ Create /dev/shm/ipc_yolov4_shm
-    ├─ Write count=3
-    └─ Write 3 Detection structs
-
-T3: Detector exits
-
-T4: Reader starts (can run anytime after T2)
-    ├─ Open shared memory
-    └─ Read SharedData struct
-
-T5: Render (0.1s)
-    ├─ Load original image
-    ├─ Draw 3 bounding boxes
-    └─ Save output
-
-T6: Done ✓
+# If not found, run C program first
+./objectDetection sample.png
 ```
 
-### Customizing Detection
+### "Error reading shared memory"
+- Ensure C program ran successfully
+- Check `/dev/shm/` is mounted (Linux/WSL only)
+- Windows: Use WSL2 or Linux VM
 
-**Edit confidence in `detect.py`:**
-```python
-# Line ~68
-def detect_and_render(image_path, output_path=None, conf=0.5, iou=0.45):
-    # Change conf=0.5 to conf=0.3 for more detections
-```
+### "Failed to load image"
+- Verify `sample.png` exists in current directory
+- Use absolute paths if needed
 
-**Edit model in any script:**
-```python
-# Change from YOLOv5s to YOLOv5m (better accuracy, slower)
-model = YOLO('yolov5m.pt')  # instead of 'yolov5s.pt'
+### Compilation Errors (C)
+```bash
+# Missing darknet library
+sudo apt-get install libdarknet-dev  # Debian/Ubuntu
+brew install darknet                  # macOS
+
+# Or compile from source
+git clone https://github.com/AlexeyAB/darknet
+cd darknet && make
 ```
 
 ---
 
-## Project Structure Summary
+## Advanced: Continuous Detection Loop
+
+For real-time detection, modify C program to run continuously:
+
+```c
+while(1) {
+    // Capture new frame (from camera, file, etc.)
+    image im = load_image_color(image_path, 0, 0);
+    
+    // Detect and write to shared memory
+    network_predict_image(net, im);
+    // ... detection code ...
+    
+    // Python reader can poll and read continuously
+    free_image(im);
+    usleep(100000);  // 100ms delay
+}
+```
+
+Python reader can poll:
+```python
+while True:
+    detections = read_shared_memory()
+    if detections:
+        render_detections(image_path, detections)
+    time.sleep(0.1)
+```
+
+---
+
+## Project Structure
 
 ```
 EmbeddedAssignment/
-├── detect.py                    # ⭐ Simple detector (USE THIS)
-├── ipc_yolov4_replica.py       # IPC detector (Python)
-├── ipc_reader.py               # IPC reader (Python)
-├── ipc_yolov4.c                # IPC detector (C/Darknet)
-├── README.md                    # This file
-├── sample.png                   # Test image (if present)
-└── sample_detected.png          # Output (after running)
+├── objectDetection.c        # C detector (writes to SHM)
+├── objectReaderSHM.py       # Python reader (reads from SHM)
+├── sample.png               # Test input image
+├── sample_detected.png      # Output with bounding boxes
+├── yolov4-tiny.cfg          # YOLOv4 configuration
+├── yolov4-tiny.weights      # Pre-trained weights
+└── README.md                # This file
 ```
-
-**Recommended workflow:**
-1. Start with `python detect.py your_image.jpg`
-2. View `your_image_detected.jpg`
-3. Explore IPC approach for learning/production use
 
 ---
 
 ## Summary
 
-✅ **For quick object detection**: Use `detect.py`  
-✅ **For embedded systems/IPC learning**: Use IPC approach  
-✅ **Windows users**: Stick with `detect.py`  
-✅ **Linux/WSL users**: Try both approaches
+This project demonstrates **POSIX shared memory IPC** between C and Python:
 
-Both implementations produce the same quality results - choose based on your needs!
+✅ **C writes** detection results to `/dev/shm/ipc_yolov4_shm`  
+✅ **Python reads** from same memory location  
+✅ **Zero-copy** data transfer (memory speed)  
+✅ **Language-agnostic** - works across C/Python boundary  
+✅ **Production-ready** pattern for embedded systems
+
+### Key Takeaways
+
+1. **Shared memory** is the fastest IPC method
+2. **Structure alignment** must match byte-for-byte between languages
+3. **Processes are independent** - C can exit before Python reads
+4. **Perfect for embedded** - C does heavy lifting, Python for visualization
+
+### Learning Outcomes
+
+- POSIX shared memory (`shm_open`, `mmap`)
+- Cross-language data structure design
+- Inter-process communication patterns
+- Embedded system architecture
+- YOLOv4 object detection integration
