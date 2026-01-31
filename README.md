@@ -61,7 +61,8 @@ Both processes access **the same memory location** (`/dev/shm/ipc_yolov4_shm`) u
 |------|----------|------|----------|
 | `objectDetection.c` | C | **Writer** | Detects objects, writes to shared memory |
 | `objectReaderSHM.py` | Python | **Reader** | Reads from shared memory, renders output |
-| `sample.png` | - | Test image | Input for detection |
+| `sample.png` | - | Input | Test image for detection |
+| `sample_detected.png` | - | Output | Annotated image with bounding boxes |
 
 ---
 
@@ -164,11 +165,16 @@ Rendering 3 detection(s)...
 Saved to sample_detected.png
 ```
 
+**Result Image:**
+
+![sample_detected.png](sample_detected.png)
+
 ### Step 4: View Output
 ```bash
 # View the annotated image
 xdg-open sample_detected.png  # Linux
 open sample_detected.png      # macOS
+start sample_detected.png     # Windows
 ```
 
 ---
@@ -388,9 +394,23 @@ Python reader can poll:
 while True:
     detections = read_shared_memory()
     if detections:
-        render_detections(image_path, detections)
+        render_detections('sample.png', detections)
     time.sleep(0.1)
 ```
+
+---
+
+## Example: Input and Output Images
+
+### Input Image
+![sample.png](sample.png)
+
+*Sample input image used for object detection*
+
+### Output Image
+![sample_detected.png](sample_detected.png)
+
+*Detected objects with green bounding boxes drawn by objectReaderSHM.py*
 
 ---
 
